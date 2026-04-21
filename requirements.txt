@@ -1,0 +1,14 @@
+# MoE-Watcher-Modifier requirements
+#
+# Core (required):
+torch>=2.0.0
+safetensors>=0.4.0
+#
+# Optional — nicer terminal output:
+rich>=13.0.0
+#
+# Optional — full-model stats collection only (not needed for router-only mode):
+transformers>=4.40.0
+#
+# Optional — if your checkpoint uses FP8 or other custom dtypes:
+# accelerate>=0.27.0

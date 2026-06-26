@@ -1,0 +1,19 @@
+{
+  "schema": "qwen3_next",
+  "mode": "router-only",
+  "num_layers": 48,
+  "num_experts": 512,
+  "num_samples": 1024,
+  "total_router_selections": 491520,
+  "global_max_count": 1453,
+  "global_min_count": 488,
+  "global_gini": 0.1006,
+  "top_1pct_share": 0.0142,
+  "top_5pct_share": 0.0702,
+  "top_10pct_share": 0.1322,
+  "top_20pct_share": 0.2504,
+  "top_50pct_share": 0.5712,
+  "avg_cold_experts_per_layer": 3.396,
+  "max_cold_experts_in_layer": 27,
+  "layers_with_any_cold_experts": 45
+}

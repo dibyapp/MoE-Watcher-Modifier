@@ -176,5 +176,3 @@ Read [validation boundaries](docs/VALIDATION.md), [contribution guidance](CONTRI
 Created by [dibyapp](https://github.com/dibyapp). Original source is [MIT licensed](LICENSE);
 model weights and dependencies retain their own terms. If this helps your experiments, a reproducible
 bug report, compatibility result, or star helps others discover the project.
-
-Also by dibyapp: [PCBEditor — AI circuit and PCB design](https://pcbeditor.com/).

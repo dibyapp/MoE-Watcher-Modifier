@@ -1,389 +1,178 @@
-# MoE-Watcher-Modifier
+# MoE Expert Pruning & Router Analysis for Safetensors
 
-Model-agnostic Mixture-of-Experts analysis and pruning toolkit.
+[![CPU workflow checks](https://github.com/dibyapp/MoE-Watcher-Modifier/actions/workflows/cpu-check.yml/badge.svg)](https://github.com/dibyapp/MoE-Watcher-Modifier/actions/workflows/cpu-check.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Analyses which experts a MoE model actually uses, ranks them by importance,
-and rewrites the checkpoint with fewer experts — reducing model size without
-modifying training or inference code.
+**MoE-Watcher-Modifier** is an experimental Python toolkit for **Mixture-of-Experts expert pruning**:
+inspect a safetensors checkpoint, estimate expert usage, build a keep/drop plan, and rewrite supported
+checkpoint layouts with fewer experts. It targets researchers exploring LLM model compression and
+contributors who want a reproducible checkpoint workflow.
 
-Works with any safetensors MoE checkpoint. No specific model family, serving
-framework, or hardware required.
+The CPU inspection, router-only probing, and rewriting pipeline does not require a GPU. Full-model
+collection needs enough memory for the model. Pruning can degrade quality; fewer stored experts do
+not automatically mean faster inference, lower peak memory, or compatibility with every runtime.
 
----
+## Why use it?
 
-## Supported Model Families
+- Inspect router and expert tensor names before attempting a rewrite.
+- Compare per-layer or global keep plans using activation counts or probability sums.
+- Run a **read-only dry run** before writing a separate output checkpoint.
+- Compact retained expert IDs, slice router rows, update configuration, and write a manifest.
+- Try the pipeline on tiny synthetic fixtures before downloading any large model.
 
-| Schema | Models |
-|---|---|
-| `qwen3_next` | Qwen3-Coder-Next, Qwen3-Next |
-| `qwen_moe` | Qwen1.5-MoE, Qwen2-MoE |
-| `mixtral` | Mixtral-8x7B, Mixtral-8x22B |
-| `deepseek` | DeepSeek-V2, DeepSeek-V3, DeepSeek-R1 |
-| `phi3_moe` | Phi-3.5-MoE |
-| `olmoe` | OLMoE |
+[Install](#installation) · [Workflow](#checkpoint-pruning-workflow) · [Compatibility](docs/COMPATIBILITY.md) ·
+[FAQ](#faq) · [Validation](docs/VALIDATION.md) · [Contribute](CONTRIBUTING.md)
 
-Schema is auto-detected from `config.json`. Pass `--schema` to override.
+## Installation
 
----
+Use Python **3.10+** and a virtual environment. Start with Python 3.11 if you want the CI reference setup.
+Install a PyTorch build suitable for your platform using the [official selector](https://pytorch.org/get-started/locally/).
 
-## Requirements
-
-```
-torch>=2.0.0
-safetensors>=0.4.0
-rich>=13.0.0          # optional, nicer output
-transformers>=4.40.0  # optional, full-model mode only
-```
-
-Install:
-```bash
-pip install torch safetensors rich
-pip install transformers  # only if using full-model mode
-```
-
----
-
-## Two Tools
-
-| Tool | Purpose |
-|---|---|
-| `moe_monitor.py` | Analyse expert usage, rank experts, generate pruning plan |
-| `moe_prune.py` | Rewrite checkpoint using a pruning plan |
-
-`moe_monitor.py` subcommands:
-
-| Subcommand | When to use |
-|---|---|
-| `inspect` | See checkpoint layout, auto-detect schema |
-| `router-only` | Quick stats from random probes — no GPU, no full model load |
-| `full-model` | Best stats from real prompts — needs RAM/VRAM to load model |
-| `report` | Re-rank a saved report for a different keep count (instant) |
-| `daemon` | **Live monitoring** — transparent proxy in front of any server |
-
----
-
-## Workflow
-
-### Step 1 — Inspect the checkpoint
+### Linux / Ubuntu / macOS
 
 ```bash
-python3 moe_monitor.py inspect --model-dir /path/to/checkpoint
+git clone https://github.com/dibyapp/MoE-Watcher-Modifier.git
+cd MoE-Watcher-Modifier
+python3 -m venv .venv
+source .venv/bin/activate
+# Linux/Ubuntu, CPU-only:
+python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+# On macOS, use this instead of the CPU-index command:
+# python -m pip install torch
+python -m pip install -r requirements.txt
+python -m unittest discover -s tests -v
 ```
 
-Output: JSON summary of layers, experts, detected schema, sample tensor keys.
+### Windows PowerShell
 
----
+Activation is optional: use the environment's interpreter directly.
 
-### Step 2 — Collect expert usage statistics
+```powershell
+git clone https://github.com/dibyapp/MoE-Watcher-Modifier.git
+cd MoE-Watcher-Modifier
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
 
-**Router-only mode** (recommended first pass):
+The remaining examples use `python` from the virtual environment. On Windows without activation,
+substitute `.\.venv\Scripts\python.exe`. For full-model collection or checkpoint tokenization in
+daemon mode, install `python -m pip install -r requirements-full.txt`.
 
-Loads only the router weight tensors (~MB). Probes each router with random
-unit-norm hidden states. No GPU required. Completes in minutes even for large
-checkpoints.
+## Choose the right measurement
+
+| Mode | What it does | What the result means |
+| --- | --- | --- |
+| `inspect` | Reads checkpoint structure and tensor names | Layout inspection; not a compatibility certification |
+| `router-only` | Passes random hidden vectors through router weights | Synthetic router behavior, **not real prompt routing** |
+| `full-model` | Hooks matching gate modules during prompt forward passes | Counts derived from gate outputs; verify model-specific routing semantics |
+| `daemon` | Proxies requests; passes token embeddings through each router | **Embedding-based heuristic**, not backend routing telemetry |
+| `report` | Re-ranks a saved report | Reuses the original measurement and its limitations |
+
+`full-model` uses a generic softmax/top-k calculation. Models with grouped routing, sigmoid scores,
+bias correction, fused gates, or custom gate outputs need additional validation. Calibration prompts
+should represent your workload, with a separate evaluation set for quality checks.
+
+## Checkpoint pruning workflow
+
+Provide your own locally available, licensed safetensors checkpoint. `./checkpoints/model` below is
+a placeholder; the project does not ship or automatically download model weights.
+**Choose `--keep-experts` and `--new-topk` within your checkpoint's actual counts.** The values below
+illustrate a checkpoint with at least four experts; they are not a recommended compression ratio.
+
+```mermaid
+flowchart LR
+  A[Inspect layout] --> B[Collect or probe routers]
+  B --> C[Review keep plan]
+  C --> D[Read-only dry run]
+  D --> E[Write separate checkpoint]
+  E --> F[Compare quality and runtime]
+```
 
 ```bash
-python3 moe_monitor.py router-only \
-  --model-dir /path/to/checkpoint \
-  --output ./stats/report.json \
-  --keep-experts 128 \
-  --new-topk 4 \
-  --samples 1024 \
-  --strategy per-layer
+python moe_monitor.py inspect --model-dir ./checkpoints/model
+python moe_monitor.py router-only --model-dir ./checkpoints/model --output ./outputs/report.json --keep-experts 4 --new-topk 2 --samples 1024 --strategy per-layer
+python moe_prune.py dry-run --model-dir ./checkpoints/model --plan ./outputs/report-plan.json
+python moe_prune.py prune-checkpoint --model-dir ./checkpoints/model --plan ./outputs/report-plan.json --output-dir ./outputs/pruned-model --copy-support-files
 ```
 
-**Full-model mode** (best quality stats):
+The output directory must be empty and separate from the source, including its parents and children.
+The dry run validates the plan and tensor transformation without creating files. A failed real rewrite
+may leave partial output: keep the source, inspect the error, and choose a new empty output directory.
 
-Loads the full model, installs forward hooks on every MoE gate, runs your
-real prompts through. Captures true routing decisions on your actual workload.
-Requires enough RAM/VRAM to load the model.
+For actual prompt forward passes, create a local JSONL file with one `{"prompt":"Your calibration text"}`
+object per line, then run:
 
 ```bash
-python3 moe_monitor.py full-model \
-  --model-dir /path/to/checkpoint \
-  --prompts ./prompts.jsonl \
-  --output ./stats/report.json \
-  --keep-experts 128 \
-  --new-topk 4
+python moe_monitor.py full-model --model-dir ./checkpoints/model --prompts ./prompts.jsonl --output ./outputs/full-report.json --keep-experts 4 --new-topk 2
 ```
 
-Prompts file format — JSONL with a `prompt` field, or plain text (one prompt per line):
+Custom model code is disabled by default. Only add `--trust-remote-code` after reviewing and trusting
+the checkpoint's code. There is no built-in fine-tuning, quality benchmark, GGUF conversion, or runtime certification.
 
-```jsonl
-{"prompt": "Write a Python function to merge two sorted lists."}
-{"prompt": "Debug this Go code: ..."}
-```
-
----
-
-### Step 3 — Review the report
-
-The monitor prints a ranked table of expert usage and the exact prune command
-to run. It also writes:
-
-- `./stats/report.json` — full report with per-layer stats and counts
-- `./stats/report-plan.json` — pruning plan ready for `moe_prune.py`
-
-To re-rank with a different keep count without re-probing:
+To re-rank the existing report with another keep count:
 
 ```bash
-python3 moe_monitor.py report \
-  --input ./stats/report.json \
-  --keep-experts 64
+python moe_monitor.py report --input ./outputs/report.json --keep-experts 2 --new-topk 1
 ```
 
----
+`uniform-plan` keeps arbitrary expert IDs for pipeline experiments; it is not an importance-based plan.
+Use `python moe_monitor.py --help` and `python moe_prune.py --help` for the full CLI.
 
-### Step 4 — Dry-run the rewrite
-
-Validates the plan against the checkpoint structure without writing any files.
+## Experimental request proxy
 
 ```bash
-python3 moe_prune.py dry-run \
-  --model-dir /path/to/checkpoint \
-  --plan ./stats/report-plan.json
+python moe_monitor.py daemon --model-dir ./checkpoints/model --backend http://localhost:11434 --listen-host 127.0.0.1 --listen-port 8080 --keep-experts 4 --new-topk 2 --output ./outputs/live-report.json --report-every 50
 ```
 
----
+This proxy loads router weights **and the embedding table**; loading may read whole shards. Memory
+requirements depend on the checkpoint. Without a usable tokenizer it falls back to character-derived
+IDs, making the estimate still less representative. It does not execute custom tokenizer code.
 
-### Step 5 — Rewrite the checkpoint
+The current proxy buffers complete backend responses, including streaming responses, and handles
+requests through a single-threaded HTTP server. It has no built-in authentication, TLS, queue limit,
+or latency guarantee. Keep it on loopback for local experiments. Request bodies and authorization
+headers are forwarded to the configured backend; use only a backend you trust.
 
-```bash
-python3 moe_prune.py prune-checkpoint \
-  --model-dir /path/to/checkpoint \
-  --plan ./stats/report-plan.json \
-  --output-dir ./pruned-128experts \
-  --copy-support-files
-```
+Reports are emitted every N analyzed prompts and on Ctrl+C. SIGUSR1/SIGHUP report triggers are Unix-only.
+This mode is useful for heuristic experiments, **not evidence that those experts were used in inference**.
 
-`--copy-support-files` copies the tokenizer, generation config, and other
-auxiliary files into the output directory so it is a complete, loadable checkpoint.
+## Supported layouts
 
-The rewriter:
-- Drops expert tensors not in the keep list
-- Renames retained experts to compact IDs `0..target-1`
-- Slices each router weight matrix to match the retained expert IDs
-- Updates `config.json` with the new expert count and top-k
-- Writes `pruning_manifest.json` for traceability
+Named schemas exist for `mixtral`, `qwen3_next`, `qwen_moe`, `deepseek`, `phi3_moe`, and `olmoe`.
+Actual support depends on exact tensor names and config keys, not just the model family name.
+The rewriter requires individually named experts such as `experts.0.w1.weight` and 2D router weights.
+Packed/fused expert tensors, quantized auxiliary tensors, and model-specific routing changes are not
+generically handled. See [compatibility and evaluation](docs/COMPATIBILITY.md) before pruning.
 
-No GPU required. Memory usage is bounded by the largest shard size.
+## FAQ
 
----
+**Can I prune a MoE model on CPU?** Inspection, random router probing, and supported-layout rewriting
+run on CPU. Allow enough RAM for the source shard and transformed tensors, and enough disk for a new checkpoint.
 
-### Step 6 — Verify the output
+**Does it work with Mixtral, Qwen, DeepSeek, and OLMoE?** Schemas are provided, but each checkpoint
+must match the documented layout. CI uses a tiny synthetic Mixtral-style fixture; it does not certify
+the full models or every version of a family.
 
-```bash
-python3 moe_monitor.py inspect --model-dir ./pruned-128experts
-```
+**Does pruning reduce VRAM without hurting quality?** There is no universal guarantee. Measure output
+quality, task metrics, peak memory, and latency against the original model on the same workload.
 
----
+**Are router-only and daemon reports real expert usage?** They are estimates. Full-model hooks are
+closer to actual activations, but their scoring and hook coverage still need model-specific checks.
 
-## Daemon — Live Traffic Monitoring
+**Why does a rewrite reject my checkpoint?** Check config counts, router shape, expert ID coverage,
+and naming. A schema name cannot adapt an unsupported fused or packed representation.
 
-The best expert rankings come from your real workload. The daemon is a
-transparent HTTP proxy that sits in front of any model server and silently
-accumulates routing statistics from live user traffic.
+**Can I share a report?** Reports and manifests may contain local paths. Remove personal paths,
+private prompts, identifiers, and proprietary information first. Keep private outputs in ignored directories.
 
-**Supports any runtime:** ollama, vLLM, llama.cpp server, LM Studio,
-text-generation-webui, or anything with an OpenAI-compatible API.
+## Tests, development, and license
 
-**Works on any hardware:** Linux, macOS, Windows, AMD, NVIDIA, CPU-only.
-The daemon loads only the router weights (~MB) and the embedding table —
-not the full model.
+Run `python -m unittest discover -s tests -v`. CI exercises CPU fixtures on Linux, Windows, and macOS.
+Read [validation boundaries](docs/VALIDATION.md), [contribution guidance](CONTRIBUTING.md), and
+[historical development notes](DEVLOG.md). Historical logs and plots are not current quality or performance promises.
 
-### Start the daemon
-
-```bash
-python3 moe_monitor.py daemon \
-  --model-dir /path/to/checkpoint \
-  --backend http://localhost:11434 \
-  --listen-port 8080 \
-  --keep-experts 128 \
-  --new-topk 4 \
-  --output ./stats/live-report.json \
-  --report-every 50
-```
-
-Then point your app at `http://localhost:8080` instead of the backend.
-All requests are forwarded transparently — no latency added to the response path.
-
-### How it works
-
-```
-Your app  →  :8080 (daemon)  →  :11434 (ollama / vLLM / llama.cpp / ...)
-                  │
-                  └─ background thread:
-                       1. Extract prompt text from request body
-                       2. Tokenize with checkpoint's own tokenizer
-                       3. Look up token embeddings from embed_tokens.weight
-                       4. Forward each token's hidden state through router weights
-                       5. Record selected experts per layer
-                       6. Every N requests: write report + print prune command
-```
-
-### Force an immediate report
-
-```bash
-# Print ranked expert table and ready-to-run prune command right now:
-kill -USR1 $(pgrep -f "moe_monitor.py daemon")
-```
-
-### Daemon workflow (recommended for production quality)
-
-```
-1. Start daemon in front of your model server
-2. Use the model normally for a few hours / days
-3. After N prompts, daemon auto-prints ranked report + prune command
-4. Run the printed moe_prune.py command
-5. Load pruned checkpoint in your server
-6. Repeat if needed — each iteration uses real routing signal
-7. Finetune / distill on domain data  →  full quality recovery
-```
-
----
-
-### Step 6 — Verify the output
-
-```bash
-python3 moe_monitor.py inspect --model-dir ./pruned-128experts
-```
-
----
-
-## Iterative Workflow
-
-For best results, iterate:
-
-```
-1. router-only on original checkpoint  →  initial plan (structural preferences)
-2. prune-checkpoint                    →  smaller checkpoint
-3. Load pruned checkpoint (fits in memory now)
-4. full-model on pruned checkpoint     →  real routing stats
-5. report --keep-experts N             →  refined plan
-6. prune-checkpoint again              →  final checkpoint
-7. Finetune / distill on domain data   →  quality recovery
-```
-
----
-
-## Output Files
-
-### Report JSON (`report.json`)
-
-```json
-{
-  "schema": "qwen3_next",
-  "mode": "router-only",
-  "source_num_experts": 512,
-  "target_num_experts": 128,
-  "total_router_selections": 491520,
-  "expert_coverage_fraction": 0.993,
-  "global_expert_ranking": [316, 290, 197, ...],
-  "layer_stats": [
-    {
-      "layer": 0,
-      "active_experts": 508,
-      "top5_experts": [262, 81, 116, 52, 132],
-      "keep_ids": [5, 8, 12, ...]
-    }
-  ],
-  "plan": { ... }
-}
-```
-
-### Plan JSON (`report-plan.json`)
-
-```json
-{
-  "source_num_experts": 512,
-  "target_num_experts": 128,
-  "source_topk": 10,
-  "target_topk": 4,
-  "strategy": "per-layer",
-  "layer_keep_ids": [[5, 8, 12, ...], ...]
-}
-```
-
-### Pruning Manifest (`pruning_manifest.json`)
-
-Written into the output checkpoint directory:
-
-```json
-{
-  "source_dir": "/path/to/original",
-  "output_dir": "./pruned-128experts",
-  "source_num_experts": 512,
-  "target_num_experts": 128,
-  "strategy": "per-layer",
-  "elapsed_seconds": 312.4,
-  "total_size_bytes": 22300000000
-}
-```
-
----
-
-## Compatibility
-
-The pruned checkpoint is standard safetensors format and can be loaded by:
-
-| Runtime | Compatible | Notes |
-|---|---|---|
-| `transformers` | ✅ | Load with `AutoModelForCausalLM.from_pretrained` |
-| `vLLM` | ✅ | `vllm serve ./pruned-128experts` |
-| `llama.cpp` | ⚠️ | Needs conversion to GGUF first (see below) |
-| `ollama` | ⚠️ | Needs GGUF conversion first |
-
-### Convert to GGUF for llama.cpp / ollama
-
-```bash
-# Clone llama.cpp
-git clone https://github.com/ggerganov/llama.cpp --depth=1
-cd llama.cpp && pip install -r requirements.txt
-
-# Convert the pruned safetensors checkpoint to GGUF
-python3 convert_hf_to_gguf.py /path/to/pruned-128experts \
-  --outfile ./pruned-128experts-q4.gguf \
-  --outtype q4_k_m
-
-# Load with llama-server
-./llama-server --model ./pruned-128experts-q4.gguf --port 8000
-```
-
----
-
-## Important Limitations
-
-**Pruning alone degrades quality.** The model was trained assuming all N experts
-exist. Removing experts without finetuning produces incoherent output. Always
-finetune or distill after pruning.
-
-**Router-only stats are approximate.** Random hidden states do not reflect your
-real input distribution. Use full-model mode after an initial prune for better stats.
-
-**Aggressive pruning (>75% reduction) risks severe quality loss.** Recommended
-targets:
-- `512 → 256` — minimal risk
-- `512 → 128` — noticeable degradation, recoverable with finetuning
-- `512 → 64`  — significant degradation, heavy finetuning needed
-
----
-
-## Project Structure
-
-```
-MoE-Watcher-Modifier/
-├── moe_monitor.py          # CLI: expert usage analysis, plan generation, daemon
-├── moe_prune.py            # CLI: checkpoint rewriting
-├── moe_pruner/
-│   ├── __init__.py
-│   ├── checkpoint.py       # Safetensors checkpoint I/O + embed_tokens loader
-│   ├── schema.py           # MoE tensor naming conventions per model family
-│   ├── stats.py            # Expert usage statistics + prompt-driven probing
-│   ├── planner.py          # Pruning plan generation from stats
-│   ├── pruner.py           # Checkpoint rewriter
-│   ├── report.py           # Terminal and JSON report generation
-│   └── daemon.py           # Transparent proxy daemon for live traffic monitoring
-├── requirements.txt
-└── README.md
-```
-# MoE-Watcher-Modifier
+Created by [dibyapp](https://github.com/dibyapp). Original source is [MIT licensed](LICENSE);
+model weights and dependencies retain their own terms. If this helps your experiments, a reproducible
+bug report, compatibility result, or star helps others discover the project.

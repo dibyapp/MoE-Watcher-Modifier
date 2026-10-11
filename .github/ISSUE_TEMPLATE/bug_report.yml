@@ -1,0 +1,25 @@
+name: Reproducible bug
+description: Report a setup or behavior problem using a minimal example
+body:
+  - type: markdown
+    attributes:
+      value: "Remove credentials, personal paths, IPs, prompts, and private data before posting."
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include commands, expected behavior, and actual behavior using placeholders.
+    validations:
+      required: true
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions
+      description: OS family, runtime version, dependency versions, and repository commit.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized error or minimal fixture
+      description: Share only non-sensitive evidence. Do not attach models or databases.

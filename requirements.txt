@@ -1,14 +1,6 @@
-# MoE-Watcher-Modifier requirements
-#
-# Core (required):
+# Core CPU inspection / probing / rewriting. Install your platform's torch build first.
 torch>=2.0.0
+numpy>=1.26.0
 safetensors>=0.4.0
-#
-# Optional — nicer terminal output:
+# Terminal formatting; the code also has a plain-text fallback.
 rich>=13.0.0
-#
-# Optional — full-model stats collection only (not needed for router-only mode):
-transformers>=4.40.0
-#
-# Optional — if your checkpoint uses FP8 or other custom dtypes:
-# accelerate>=0.27.0

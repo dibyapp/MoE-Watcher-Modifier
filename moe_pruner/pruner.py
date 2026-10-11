@@ -56,8 +56,35 @@ def prune_checkpoint(
     """
     plan.validate()
 
+    expected = {
+        schema.num_layers_config_key: plan.source_num_layers,
+        schema.num_experts_config_key: plan.source_num_experts,
+        schema.num_experts_per_tok_config_key: plan.source_topk,
+    }
+    if any(src.config.get(key) != value for key, value in expected.items()):
+        raise ValueError("Plan dimensions do not match the source checkpoint config.")
+    router_layers = {
+        int(m.group("layer")) for key in src.all_keys
+        if (m := schema.match_router(key))
+    }
+    expert_ids: dict[int, set[int]] = defaultdict(set)
+    for key in src.all_keys:
+        if m := schema.match_expert(key):
+            expert_ids[int(m.group("layer"))].add(int(m.group("expert")))
+    if not router_layers or set(expert_ids) != router_layers:
+        raise ValueError("Pruning requires matching routers and separately named expert tensors.")
+    if any(layer >= plan.source_num_layers for layer in router_layers):
+        raise ValueError("Router layer index is outside the source config.")
+    if any(ids != set(range(plan.source_num_experts)) for ids in expert_ids.values()):
+        raise ValueError("Source expert IDs must cover the configured expert count per routed layer.")
+
     output_dir = Path(output_dir).expanduser().resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if output_dir == src.root or src.root in output_dir.parents or output_dir in src.root.parents:
+        raise ValueError("Output must be separate from the source checkpoint directory.")
+    if not dry_run:
+        if output_dir.exists() and any(output_dir.iterdir()):
+            raise ValueError("Output directory must be empty to avoid overwriting files.")
+        output_dir.mkdir(parents=True, exist_ok=True)
 
     t0 = time.time()
 
@@ -67,12 +94,13 @@ def prune_checkpoint(
         expert_remaps.append({old: new for new, old in enumerate(keep_ids)})
 
     # Optionally copy tokenizer and auxiliary files
-    if copy_support_files:
+    if copy_support_files and not dry_run:
         _copy_support_files(src.root, output_dir)
 
     # Write updated config.json
     new_config = _rewrite_config(src.config, plan, schema)
-    write_json(output_dir / "config.json", new_config)
+    if not dry_run:
+        write_json(output_dir / "config.json", new_config)
 
     # Process shards
     new_weight_map: dict[str, str] = {}
@@ -122,7 +150,7 @@ def prune_checkpoint(
             metadata = {
                 "format": "pt",
                 "moe_pruner": "true",
-                "source_shard": str(src.root / shard_name),
+                "source_shard": shard_name,
             }
             save_file(rewritten, str(output_dir / shard_name), metadata=metadata)
 
@@ -148,7 +176,8 @@ def prune_checkpoint(
         "metadata": {"total_size": total_size},
         "weight_map": new_weight_map,
     }
-    write_json(output_dir / "model.safetensors.index.json", new_index)
+    if not dry_run:
+        write_json(output_dir / "model.safetensors.index.json", new_index)
 
     elapsed = time.time() - t0
     manifest = {
@@ -167,7 +196,8 @@ def prune_checkpoint(
         "total_output_keys": len(new_weight_map),
         "total_size_bytes": total_size,
     }
-    write_json(output_dir / "pruning_manifest.json", manifest)
+    if not dry_run:
+        write_json(output_dir / "pruning_manifest.json", manifest)
 
     if verbose:
         size_gb = total_size / 1e9

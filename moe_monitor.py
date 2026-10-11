@@ -2,18 +2,16 @@
 """
 moe_monitor.py — MoE expert usage monitor.
 
-Analyses which experts a Mixture-of-Experts model actually uses, ranks them,
-and generates a pruning plan + ready-to-run command.
-
-Works with any MoE checkpoint stored as safetensors. No specific model family,
-framework, or hardware required.
+Estimates expert importance for supported Mixture-of-Experts safetensors layouts
+and generates a pruning plan. Synthetic probes and embedding-based proxy scores
+are not backend routing telemetry; full-model hooks require compatible gates.
 
 Subcommands:
   inspect        Show checkpoint structure and detect MoE schema.
-  router-only    Probe routers with random hidden states. No GPU, minimal RAM.
+  router-only    Probe routers with random hidden states on CPU.
   full-model     Hook a transformers model on real prompts. Needs enough RAM/VRAM.
   report         Re-render or re-rank a saved report without re-probing.
-  daemon         Transparent proxy — monitor live traffic from any runtime.
+  daemon         Experimental buffered proxy with embedding-based estimates.
 
 Examples:
 
@@ -58,6 +56,9 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 
 def cmd_inspect(args: argparse.Namespace) -> None:
@@ -195,6 +196,7 @@ def cmd_full_model(args: argparse.Namespace) -> None:
         device_map=args.device_map,
         dtype_str=args.dtype,
         max_length=args.max_length,
+        trust_remote_code=args.trust_remote_code,
         verbose=True,
     )
 
@@ -286,7 +288,7 @@ def cmd_daemon(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="MoE expert usage monitor. Works with any safetensors MoE checkpoint.",
+        description="Experimental MoE router analysis for supported safetensors layouts.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -301,7 +303,7 @@ def parse_args() -> argparse.Namespace:
     # router-only
     p = sub.add_parser(
         "router-only",
-        help="Probe routers with random hidden states. No GPU, <200 MB RAM.",
+        help="Probe routers with random hidden states on CPU; memory depends on shard size.",
     )
     p.add_argument("--model-dir", required=True)
     p.add_argument("--output", required=True, help="Path to write report JSON.")
@@ -327,6 +329,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device-map", default="auto")
     p.add_argument("--dtype", default="bfloat16")
     p.add_argument("--max-length", type=int, default=2048)
+    p.add_argument("--trust-remote-code", action="store_true",
+                   help="Allow reviewed custom model/tokenizer code to execute.")
     p.add_argument("--strategy", choices=("global", "per-layer"), default="per-layer")
     p.add_argument("--score", choices=("counts", "prob_sums"), default="counts")
     p.add_argument("--schema", default=None)
@@ -347,9 +351,9 @@ def parse_args() -> argparse.Namespace:
     p = sub.add_parser(
         "daemon",
         help=(
-            "Transparent proxy daemon. Sits in front of any OpenAI-compatible "
+            "Experimental buffered proxy. Sits in front of an OpenAI-compatible "
             "server (ollama, vLLM, llama.cpp, etc.) and silently accumulates "
-            "real expert usage stats from live traffic."
+            "embedding-based router estimates from request prompts."
         ),
     )
     p.add_argument("--model-dir", required=True,
@@ -359,8 +363,8 @@ def parse_args() -> argparse.Namespace:
                         "If omitted, auto-discovers running servers and asks you to pick one.")
     p.add_argument("--listen-port", type=int, default=8080,
                    help="Port to listen on. Default: 8080.")
-    p.add_argument("--listen-host", default="0.0.0.0",
-                   help="Host to bind. Default: 0.0.0.0.")
+    p.add_argument("--listen-host", default="127.0.0.1",
+                   help="Host to bind. Default: 127.0.0.1 (loopback).")
     p.add_argument("--keep-experts", type=int, required=True,
                    help="Target expert count for generated pruning plans.")
     p.add_argument("--new-topk", type=int, default=None,

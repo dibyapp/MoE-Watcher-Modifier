@@ -1,43 +1,17 @@
 """
-Transparent proxy daemon for live MoE expert usage monitoring.
+Experimental HTTP request proxy with embedding-based MoE router estimates.
 
-Sits in front of any OpenAI-compatible model server (ollama, vLLM, llama.cpp,
-LM Studio, text-generation-webui, etc.) and silently accumulates expert usage
-statistics as users interact with the model normally.
+The backend performs inference independently. This daemon tokenizes request text,
+loads the checkpoint's embedding table and router weights, and feeds those token
+embeddings through each router. These are heuristic scores, not observations of
+the backend's per-layer hidden states or actual expert selections.
 
-How it works:
-  1. At startup, loads ONLY the lightweight parts of the checkpoint:
-       - embed_tokens.weight  (maps token IDs → hidden states)
-       - All router (gate) weight tensors (~MB total even for 80B models)
-     This is fast (<30s) and uses minimal RAM. The full model is NOT loaded
-     here — it runs separately in your existing inference server.
-
-  2. For every incoming request, the daemon:
-       a. Forwards the full request to the backend server immediately
-       b. In a background thread, extracts the prompt text
-       c. Tokenizes it with the checkpoint's tokenizer
-       d. Looks up token embeddings from embed_tokens.weight
-       e. Runs each token's hidden state through every router weight
-       f. Records which experts would be selected
-     The background analysis never touches the main request path.
-
-  3. Every N requests (configurable, default 100), or on SIGUSR1 / SIGHUP,
-     the daemon:
-       - Writes updated stats to stats/live-report.json
-       - Prints a ranked expert table to stdout
-       - Prints the exact moe_prune.py command to prune with current stats
-
-Usage:
-  python3 moe_monitor.py daemon \\
-    --model-dir /path/to/checkpoint \\
-    --backend http://localhost:11434 \\
-    --listen-port 8080 \\
-    --keep-experts 128 \\
-    --new-topk 4 \\
-    --report-every 100 \\
-    --output ./stats/live-report.json
-
-Then point your application at http://localhost:8080 instead of the backend.
+The single-threaded HTTP proxy buffers complete backend responses. Analysis runs
+in a background worker, but forwarding still has overhead and streaming is not
+preserved. There is no authentication, TLS, queue bound, or latency guarantee.
+Loopback binding is the default; use only trusted backends for local experiments.
+Memory requirements depend on the embedding table and shards read during loading.
+Reports appear every N analyzed prompts, on Ctrl+C, or on Unix report signals.
 """
 
 from __future__ import annotations
@@ -162,7 +136,7 @@ class DaemonState:
         try:
             from transformers import AutoTokenizer
             self.tokenizer = AutoTokenizer.from_pretrained(
-                self.model_dir, trust_remote_code=True
+                self.model_dir, trust_remote_code=False
             )
             print(f"[daemon] Tokenizer loaded: {type(self.tokenizer).__name__}")
         except Exception as e:
@@ -438,7 +412,7 @@ def run_daemon(
     report_every: int = 100,
     schema_name: str | None = None,
     strategy: str = "per-layer",
-    listen_host: str = "0.0.0.0",
+    listen_host: str = "127.0.0.1",
 ) -> None:
     state = DaemonState(
         model_dir=model_dir,

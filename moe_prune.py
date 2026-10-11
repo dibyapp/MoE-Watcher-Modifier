@@ -3,7 +3,7 @@
 moe_prune.py — MoE checkpoint pruner.
 
 Rewrites a safetensors MoE checkpoint with fewer experts using a pruning plan
-produced by moe_monitor.py. No GPU required. Works with any model family.
+produced by moe_monitor.py. No GPU required. Exact schema/layout matching required.
 
 Subcommands:
   inspect           Show checkpoint layout and auto-detect schema.
@@ -41,6 +41,9 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 
 def cmd_inspect(args: argparse.Namespace) -> None:
@@ -85,7 +88,7 @@ def cmd_dry_run(args: argparse.Namespace) -> None:
 
     manifest = prune_checkpoint(
         ckpt, schema, plan,
-        output_dir=args.output_dir or "/tmp/_moe_pruner_dryrun",
+        output_dir=args.output_dir or str(ckpt.root.with_name(ckpt.root.name + "-dryrun")),
         copy_support_files=False,
         dry_run=True,
         verbose=True,
@@ -157,7 +160,7 @@ def cmd_uniform_plan(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="MoE checkpoint pruner. Works with any safetensors MoE checkpoint.",
+        description="Experimental MoE checkpoint pruning for supported safetensors layouts.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )

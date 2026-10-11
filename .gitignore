@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+checkpoints/
+outputs/
+*.safetensors
+*.gguf
+prompts*.jsonl
+stats/live-*.json
+stats/private/

@@ -1,5 +1,7 @@
 # MoE-Watcher-Modifier — Development Log
 
+> Historical development notes, not a current compatibility guarantee. Local paths have been replaced with placeholders; follow the current README for setup.
+
 Complete record of every design decision, bug fix, and test result from
 building and validating the toolkit.
 
@@ -131,7 +133,7 @@ save_file(rewritten, str(output_dir / shard_name), metadata=metadata)
 
 ```bash
 huggingface-cli download allenai/OLMoE-1B-7B-0924 \
-  --local-dir /home/dibyaprakash/models/OLMoE-1B-7B \
+  --local-dir /path/to/workspace/models/OLMoE-1B-7B \
   --include "*.safetensors" "*.json" "*.txt" "tokenizer*"
 ```
 
@@ -140,7 +142,7 @@ Result: 3 shards, 13 GB total.
 ### Step 2 — Inspect
 
 ```bash
-python3 moe_monitor.py inspect --model-dir /home/dibyaprakash/models/OLMoE-1B-7B
+python3 moe_monitor.py inspect --model-dir /path/to/workspace/models/OLMoE-1B-7B
 ```
 
 ```json
@@ -158,7 +160,7 @@ Model: 16 layers × 64 experts = 1024 expert slots, 3 tensors each = 3072 keys.
 
 ```bash
 python3 moe_monitor.py router-only \
-  --model-dir /home/dibyaprakash/models/OLMoE-1B-7B \
+  --model-dir /path/to/workspace/models/OLMoE-1B-7B \
   --output ./stats/olmoe-report.json \
   --keep-experts 32 --new-topk 4 --samples 512 --strategy per-layer
 ```
@@ -180,7 +182,7 @@ Top global experts by random-probe counts:
 
 ```bash
 python3 moe_prune.py dry-run \
-  --model-dir /home/dibyaprakash/models/OLMoE-1B-7B \
+  --model-dir /path/to/workspace/models/OLMoE-1B-7B \
   --plan ./stats/olmoe-report-plan.json
 ```
 
@@ -196,9 +198,9 @@ python3 moe_prune.py dry-run \
 
 ```bash
 python3 moe_prune.py prune-checkpoint \
-  --model-dir /home/dibyaprakash/models/OLMoE-1B-7B \
+  --model-dir /path/to/workspace/models/OLMoE-1B-7B \
   --plan ./stats/olmoe-report-plan.json \
-  --output-dir /home/dibyaprakash/models/OLMoE-1B-7B-pruned-32 \
+  --output-dir /path/to/workspace/models/OLMoE-1B-7B-pruned-32 \
   --copy-support-files
 ```
 
@@ -219,7 +221,7 @@ python3 moe_prune.py prune-checkpoint \
 ### Step 6 — Verify
 
 ```bash
-python3 moe_monitor.py inspect --model-dir /home/dibyaprakash/models/OLMoE-1B-7B-pruned-32
+python3 moe_monitor.py inspect --model-dir /path/to/workspace/models/OLMoE-1B-7B-pruned-32
 ```
 
 ```json
@@ -239,7 +241,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 
 model = AutoModelForCausalLM.from_pretrained(
-    '/home/dibyaprakash/models/OLMoE-1B-7B-pruned-32',
+    '/path/to/workspace/models/OLMoE-1B-7B-pruned-32',
     dtype=torch.bfloat16, device_map='auto'
 )
 ```

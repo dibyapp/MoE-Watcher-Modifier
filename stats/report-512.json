@@ -31961,7 +31961,7 @@
     }
   ],
   "mode": "router-only",
-  "model_dir": "/home/dibyaprakash/.cache/huggingface/hub/models--Qwen--Qwen3-Coder-Next-FP8/snapshots/da6e2ed27304dd39abadd9c82ef50e8de67bdd4c",
+  "model_dir": "/path/to/workspace/.cache/huggingface/hub/models--Qwen--Qwen3-Coder-Next-FP8/snapshots/da6e2ed27304dd39abadd9c82ef50e8de67bdd4c",
   "num_samples": 1024,
   "plan": {
     "format_version": 1,

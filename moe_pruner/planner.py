@@ -39,12 +39,22 @@ class Plan:
     notes: list[str] = field(default_factory=list)
 
     def validate(self) -> None:
+        if self.source_num_layers < 1 or self.source_num_experts < 1:
+            raise ValueError("Source layer and expert counts must be positive.")
+        if not 1 <= self.target_num_experts <= self.source_num_experts:
+            raise ValueError("Target expert count must be within the source expert count.")
+        if not 1 <= self.source_topk <= self.source_num_experts:
+            raise ValueError("Source top-k must be within the source expert count.")
+        if not 1 <= self.target_topk <= self.target_num_experts:
+            raise ValueError("Target top-k must be within the retained expert count.")
         if len(self.layer_keep_ids) != self.source_num_layers:
             raise ValueError(
                 f"Plan has {len(self.layer_keep_ids)} layers, "
                 f"expected {self.source_num_layers}"
             )
         for i, ids in enumerate(self.layer_keep_ids):
+            if len(set(ids)) != len(ids) or any(type(x) is not int or x < 0 for x in ids):
+                raise ValueError(f"Layer {i}: expert IDs must be unique non-negative integers.")
             if len(ids) != self.target_num_experts:
                 raise ValueError(
                     f"Layer {i}: keep list has {len(ids)} ids, "

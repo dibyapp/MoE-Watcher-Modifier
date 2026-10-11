@@ -1,0 +1,30 @@
+name: CPU workflow checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  synthetic-checkpoint:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU PyTorch (Linux and Windows)
+        if: runner.os != 'macOS'
+        run: python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Install PyTorch (macOS)
+        if: runner.os == 'macOS'
+        run: python -m pip install torch
+      - run: python -m pip install -r requirements.txt
+      - run: python -m unittest discover -s tests -v

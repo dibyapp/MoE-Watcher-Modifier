@@ -283,6 +283,7 @@ def collect_full_model(
     dtype_str: str = "bfloat16",
     max_length: int = 2048,
     verbose: bool = True,
+    trust_remote_code: bool = False,
 ) -> Stats:
     """
     Load the full model via transformers and collect real routing statistics
@@ -301,11 +302,11 @@ def collect_full_model(
         print(f"[stats] Loading model from {checkpoint.root} ...")
 
     tokenizer = AutoTokenizer.from_pretrained(
-        str(checkpoint.root), trust_remote_code=True
+        str(checkpoint.root), trust_remote_code=trust_remote_code
     )
     model = AutoModelForCausalLM.from_pretrained(
         str(checkpoint.root),
-        trust_remote_code=True,
+        trust_remote_code=trust_remote_code,
         device_map=device_map,
         torch_dtype=dtype,
     )

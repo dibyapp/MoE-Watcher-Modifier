@@ -1849,7 +1849,7 @@
     }
   ],
   "mode": "router-only",
-  "model_dir": "/home/dibyaprakash/models/OLMoE-1B-7B",
+  "model_dir": "/path/to/workspace/models/OLMoE-1B-7B",
   "num_samples": 128,
   "plan": {
     "format_version": 1,
